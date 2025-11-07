@@ -1,4 +1,7 @@
 flask
+scikit-learn
+pandas
 gunicorn
 setuptools
 wheel
+numpy
