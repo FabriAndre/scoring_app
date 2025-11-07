@@ -1,88 +1,70 @@
-from flask import Flask, jsonify, request
-import random
+from flask import Flask, request, jsonify
+import numpy as np
+import pickle
 
 app = Flask(__name__)
 
-# ✅ Endpoint principal de prueba
-@app.route('/')
+# Cargar modelo entrenado
+with open('modelo_scoring.pkl', 'rb') as f:
+    modelo = pickle.load(f)
+
+@app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "message": "¡API funcionando correctamente en Render!",
         "status": "success"
     })
 
+@app.route('/predict', methods=['POST'])
+def predict_score():
+    data = request.get_json()
 
-# ✅ Endpoint para calcular el score crediticio
-@app.route('/score', methods=['POST'])
-def calcular_score():
-    try:
-        datos = request.get_json()
+    # Campos esperados
+    required_fields = ['edad','gastos_mensuales','ingresos_mensuales',
+                       'antiguedad_laboral','ocupacion','estado_civil',
+                       'monto_solicitado','plazo_meses']
+    
+    # Validar campos faltantes
+    if not all(field in data for field in required_fields):
+        return jsonify({"error": "Faltan campos requeridos"}), 400
 
-        # Obtener los valores del cuerpo JSON
-        edad = datos.get("edad", 0)
-        gastos = datos.get("gastosmensuales", 0)
-        ingresos = datos.get("ingresosmensuales", 0)
-        antiguedad = datos.get("antiguedadlaboral", 0)
-        ocupacion = datos.get("ocupacion", "").lower()
-        estadocivil = datos.get("estadocivil", "").lower()
-        monto = datos.get("montosolicitado", 0)
-        plazo = datos.get("plazomeses", 0)
+    # Convertir los valores
+    edad = float(data['edad'])
+    gastos = float(data['gastos_mensuales'])
+    ingresos = float(data['ingresos_mensuales'])
+    antiguedad = float(data['antiguedad_laboral'])
+    monto = float(data['monto_solicitado'])
+    plazo = float(data['plazo_meses'])
 
-        # Validación básica de campos
-        if ingresos <= 0 or gastos < 0 or edad <= 0:
-            return jsonify({"error": "Datos inválidos o incompletos"}), 400
+    # Variables derivadas
+    tasa = 0.02
+    cuota = (monto * tasa) / (1 - (1 + tasa) ** (-plazo))
+    RCD = cuota / ingresos
+    Monto_Ingreso_Ratio = monto / ingresos
+    Anios_Plazo = plazo / 12
 
-        # 📊 Cálculo base del score (simulado)
-        base = (ingresos - gastos) / (monto / (plazo + 1) + 1)
-        base += (antiguedad * 3) + (edad * 0.6)
+    X_input = np.array([[edad, ingresos, gastos, antiguedad,
+                         monto, plazo, cuota, RCD, Monto_Ingreso_Ratio, Anios_Plazo]])
 
-        # Ajuste por ocupación
-        if ocupacion in ["independiente", "freelancer"]:
-            base *= 0.9
-        elif ocupacion in ["empleado", "profesional"]:
-            base *= 1.1
+    score_pred = modelo.predict(X_input)[0]
+    score_pred = int(np.clip(score_pred, 1, 999))
 
-        # Ajuste por estado civil
-        if estadocivil in ["casado", "conviviente"]:
-            base *= 1.05
-        elif estadocivil == "divorciado":
-            base *= 0.95
+    # Categoría del puntaje
+    if score_pred >= 877:
+        categoria = "Excelente Puntaje"
+    elif score_pred >= 722:
+        categoria = "Buen Puntaje"
+    elif score_pred >= 598:
+        categoria = "Puntaje Medio"
+    elif score_pred >= 477:
+        categoria = "Puntaje Bajo"
+    else:
+        categoria = "Puntaje Muy Bajo"
 
-        # Normalización del score entre 1 y 999
-        score = int(max(1, min(999, base + random.uniform(-40, 40))))
+    return jsonify({
+        "score": score_pred,
+        "categoria": categoria
+    })
 
-        # 🧠 Clasificación según el rango de score
-        if 877 <= score <= 999:
-            categoria = "Excelente Puntaje"
-        elif 722 <= score <= 876:
-            categoria = "Buen Puntaje"
-        elif 598 <= score <= 721:
-            categoria = "Puntaje Medio"
-        elif 477 <= score <= 597:
-            categoria = "Puntaje Bajo"
-        else:
-            categoria = "Puntaje Muy Bajo"
-
-        # Retornar el resultado
-        return jsonify({
-            "score": score,
-            "categoria": categoria,
-            "detalle": {
-                "edad": edad,
-                "gastosmensuales": gastos,
-                "ingresosmensuales": ingresos,
-                "antiguedadlaboral": antiguedad,
-                "ocupacion": ocupacion,
-                "estadocivil": estadocivil,
-                "montosolicitado": monto,
-                "plazomeses": plazo
-            }
-        }), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# 🚀 Ejecución local
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
